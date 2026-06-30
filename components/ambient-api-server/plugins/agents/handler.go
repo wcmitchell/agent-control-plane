@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"net/http"
 	"regexp"
 
@@ -94,6 +95,44 @@ func (h agentHandler) Patch(w http.ResponseWriter, r *http.Request) {
 			}
 			if patch.LlmMaxTokens != nil {
 				found.LlmMaxTokens = *patch.LlmMaxTokens
+			}
+			if patch.Entrypoint != nil {
+				found.Entrypoint = patch.Entrypoint
+			}
+			if patch.Providers != nil {
+				raw, merr := json.Marshal(patch.Providers)
+				if merr != nil {
+					return nil, errors.GeneralError("failed to marshal providers: %v", merr)
+				}
+				s := string(raw)
+				found.Providers = &s
+			}
+			if patch.Payloads != nil {
+				raw, merr := json.Marshal(patch.Payloads)
+				if merr != nil {
+					return nil, errors.GeneralError("failed to marshal payloads: %v", merr)
+				}
+				s := string(raw)
+				found.Payloads = &s
+			}
+			if patch.Environment != nil {
+				raw, merr := json.Marshal(patch.Environment)
+				if merr != nil {
+					return nil, errors.GeneralError("failed to marshal environment: %v", merr)
+				}
+				s := string(raw)
+				found.Environment = &s
+			}
+			if patch.SandboxTemplate != nil {
+				raw, merr := json.Marshal(patch.SandboxTemplate)
+				if merr != nil {
+					return nil, errors.GeneralError("failed to marshal sandbox_template: %v", merr)
+				}
+				s := string(raw)
+				found.SandboxTemplate = &s
+			}
+			if patch.SandboxPolicy != nil {
+				found.SandboxPolicy = patch.SandboxPolicy
 			}
 			if patch.Labels != nil {
 				found.Labels = patch.Labels

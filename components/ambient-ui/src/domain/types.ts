@@ -105,6 +105,30 @@ export type DomainSessionMessage = {
   createdAt: string
 }
 
+export type DomainPayload = {
+  sandbox_path: string
+  content?: string
+  repo_url?: string
+  ref?: string
+}
+
+export type DomainResourceRequirements = {
+  cpu?: string
+  memory?: string
+}
+
+export type DomainGpuRequirements = {
+  count?: number
+}
+
+export type DomainSandboxTemplate = {
+  image?: string
+  resources?: DomainResourceRequirements
+  gpu?: DomainGpuRequirements
+  runtime_class_name?: string
+  log_level?: string
+}
+
 export type DomainAgent = {
   id: string
   name: string
@@ -117,6 +141,12 @@ export type DomainAgent = {
   prompt: string | null
   repoUrl: string | null
   workflowId: string | null
+  entrypoint: string | null
+  providers: string[]
+  payloads: DomainPayload[]
+  environment: Record<string, string>
+  sandboxTemplate: DomainSandboxTemplate | null
+  sandboxPolicy: string | null
   annotations: Record<string, string>
   labels: Record<string, string>
   createdAt: string
@@ -143,6 +173,12 @@ export type DomainAgentCreateRequest = {
   prompt?: string
   repoUrl?: string
   description?: string
+  entrypoint?: string
+  providers?: string[]
+  payloads?: DomainPayload[]
+  environment?: Record<string, string>
+  sandboxTemplate?: DomainSandboxTemplate
+  sandboxPolicy?: string
 }
 
 export type DomainAgentUpdateRequest = {
@@ -151,6 +187,12 @@ export type DomainAgentUpdateRequest = {
   prompt?: string
   repoUrl?: string
   description?: string
+  entrypoint?: string
+  providers?: string[]
+  payloads?: DomainPayload[]
+  environment?: Record<string, string>
+  sandboxTemplate?: DomainSandboxTemplate
+  sandboxPolicy?: string
 }
 
 export type FeedbackItem = {
@@ -288,4 +330,29 @@ export type DomainScheduledSessionUpdateRequest = {
   inactivityTimeout?: number
   stopOnRunFinished?: boolean
   runnerType?: string
+}
+
+export type DomainProvider = {
+  id: string
+  name: string
+  type: string
+  secret: string
+  namespace: string
+  projectId: string
+  annotations: Record<string, string>
+  labels: Record<string, string>
+  createdAt: string
+  updatedAt: string
+}
+
+export type DomainPolicy = {
+  id: string
+  name: string
+  namespace: string
+  projectId: string
+  spec: Record<string, unknown>
+  annotations: Record<string, string>
+  labels: Record<string, string>
+  createdAt: string
+  updatedAt: string
 }

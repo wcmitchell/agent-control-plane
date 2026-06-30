@@ -25,15 +25,15 @@ import (
 	sdkclient "github.com/ambient-code/platform/components/ambient-sdk/go-sdk/client"
 	"github.com/rs/zerolog"
 
+	"github.com/rs/zerolog/log"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"github.com/rs/zerolog/log"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 var (
@@ -138,39 +138,40 @@ func runKubeMode(ctx context.Context, cfg *config.ControlPlaneConfig) error {
 
 	factory := reconciler.NewSDKClientFactory(cfg.APIServerURL, tokenProvider, log.Logger)
 	kubeReconcilerCfg := reconciler.KubeReconcilerConfig{
-		RunnerImage:           cfg.RunnerImage,
-		RunnerGRPCURL:         cfg.GRPCServerAddr,
-		RunnerGRPCUseTLS:      cfg.RunnerGRPCUseTLS,
-		AnthropicAPIKey:       cfg.AnthropicAPIKey,
-		VertexEnabled:         cfg.VertexEnabled,
-		VertexProjectID:       cfg.VertexProjectID,
-		VertexRegion:          cfg.VertexRegion,
-		VertexCredentialsPath: cfg.VertexCredentialsPath,
-		VertexSecretName:      cfg.VertexSecretName,
-		VertexSecretNamespace: cfg.VertexSecretNamespace,
-		RunnerImageNamespace:  cfg.RunnerImageNamespace,
-		MCPImage:              cfg.MCPImage,
-		MCPAPIServerURL:       cfg.MCPAPIServerURL,
-		GitHubMCPImage:        cfg.GitHubMCPImage,
-		JiraMCPImage:          cfg.JiraMCPImage,
-		K8sMCPImage:           cfg.K8sMCPImage,
-		GoogleMCPImage:        cfg.GoogleMCPImage,
-		RunnerLogLevel:        cfg.RunnerLogLevel,
-		CPRuntimeNamespace:    cfg.CPRuntimeNamespace,
-		CPTokenURL:            cfg.CPTokenURL,
-		CPTokenPublicKey:      string(kp.PublicKeyPEM),
-		HTTPProxy:             cfg.HTTPProxy,
-		HTTPSProxy:            cfg.HTTPSProxy,
-		NoProxy:               cfg.NoProxy,
-		ImagePullSecret:       cfg.ImagePullSecret,
-		PlatformMode:          cfg.PlatformMode,
-		MPPConfigNamespace:    cfg.MPPConfigNamespace,
-		OpenShellEnabled:      cfg.OpenShellEnabled,
-		OpenShellUseGateway:   cfg.OpenShellUseGateway,
-		OpenShellRunnerImage:  cfg.OpenShellRunnerImage,
-		OpenShellPolicyName:   cfg.OpenShellPolicyName,
-		ServiceIdentity:       cfg.ServiceIdentity,
-		CACertFile:            cfg.CACertFile,
+		RunnerImage:              cfg.RunnerImage,
+		RunnerGRPCURL:            cfg.GRPCServerAddr,
+		RunnerGRPCUseTLS:         cfg.RunnerGRPCUseTLS,
+		AnthropicAPIKey:          cfg.AnthropicAPIKey,
+		VertexEnabled:            cfg.VertexEnabled,
+		VertexProjectID:          cfg.VertexProjectID,
+		VertexRegion:             cfg.VertexRegion,
+		VertexCredentialsPath:    cfg.VertexCredentialsPath,
+		VertexSecretName:         cfg.VertexSecretName,
+		VertexSecretNamespace:    cfg.VertexSecretNamespace,
+		RunnerImageNamespace:     cfg.RunnerImageNamespace,
+		MCPImage:                 cfg.MCPImage,
+		MCPAPIServerURL:          cfg.MCPAPIServerURL,
+		GitHubMCPImage:           cfg.GitHubMCPImage,
+		JiraMCPImage:             cfg.JiraMCPImage,
+		K8sMCPImage:              cfg.K8sMCPImage,
+		GoogleMCPImage:           cfg.GoogleMCPImage,
+		RunnerLogLevel:           cfg.RunnerLogLevel,
+		CPRuntimeNamespace:       cfg.CPRuntimeNamespace,
+		CPTokenURL:               cfg.CPTokenURL,
+		CPTokenPublicKey:         string(kp.PublicKeyPEM),
+		HTTPProxy:                cfg.HTTPProxy,
+		HTTPSProxy:               cfg.HTTPSProxy,
+		NoProxy:                  cfg.NoProxy,
+		ImagePullSecret:          cfg.ImagePullSecret,
+		PlatformMode:             cfg.PlatformMode,
+		MPPConfigNamespace:       cfg.MPPConfigNamespace,
+		OpenShellEnabled:         cfg.OpenShellEnabled,
+		OpenShellUseGateway:      cfg.OpenShellUseGateway,
+		OpenShellRunnerImage:     cfg.OpenShellRunnerImage,
+		OpenShellPolicyName:      cfg.OpenShellPolicyName,
+		ServiceIdentity:          cfg.ServiceIdentity,
+		CACertFile:               cfg.CACertFile,
+		AllowedSandboxRegistries: cfg.AllowedSandboxRegistries,
 	}
 
 	conn, err := grpc.NewClient(cfg.GRPCServerAddr, grpc.WithTransportCredentials(grpcCredentials(cfg.GRPCUseTLS)))
@@ -259,6 +260,17 @@ func runKubeMode(ctx context.Context, cfg *config.ControlPlaneConfig) error {
 		podSyncErrCh <- podSyncer.Run(ctx)
 	}()
 
+	var cmSyncErrCh <-chan error
+	if cfg.OpenShellUseGateway {
+		cmSyncer := reconciler.NewConfigMapSyncer(factory, provisionerKube, provisioner, cfg.PlatformMode, cfg.MPPConfigNamespace, log.Logger)
+		ch := make(chan error, 1)
+		go func() {
+			ch <- cmSyncer.Run(ctx)
+		}()
+		cmSyncErrCh = ch
+		log.Info().Msg("ConfigMap agent declaration syncer enabled")
+	}
+
 	select {
 	case tsErr := <-tsErrCh:
 		if tsErr != nil {
@@ -269,11 +281,12 @@ func runKubeMode(ctx context.Context, cfg *config.ControlPlaneConfig) error {
 		return infErr
 	case podSyncErr := <-podSyncErrCh:
 		return fmt.Errorf("pod status syncer: %w", podSyncErr)
+	case cmSyncErr := <-cmSyncErrCh:
+		return fmt.Errorf("configmap syncer: %w", cmSyncErr)
 	case gwErr := <-gatewayErrCh:
 		if gwErr != nil {
 			return fmt.Errorf("gateway provisioning: %w", gwErr)
 		}
-		// Gateway provisioning exited cleanly (shouldn't happen), continue with other channels
 		return <-infErrCh
 	}
 }

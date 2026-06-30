@@ -68,39 +68,40 @@ var credentialSidecarRegistry = map[string]credentialSidecarSpec{
 }
 
 type KubeReconcilerConfig struct {
-	RunnerImage           string
-	RunnerGRPCURL         string
-	RunnerGRPCUseTLS      bool
-	AnthropicAPIKey       string
-	VertexEnabled         bool
-	VertexProjectID       string
-	VertexRegion          string
-	VertexCredentialsPath string
-	VertexSecretName      string
-	VertexSecretNamespace string
-	RunnerImageNamespace  string
-	MCPImage              string
-	MCPAPIServerURL       string
-	GitHubMCPImage        string
-	JiraMCPImage          string
-	K8sMCPImage           string
-	GoogleMCPImage        string
-	RunnerLogLevel        string
-	CPRuntimeNamespace    string
-	CPTokenURL            string
-	CPTokenPublicKey      string
-	HTTPProxy             string
-	HTTPSProxy            string
-	NoProxy               string
-	ImagePullSecret       string
-	PlatformMode          string
-	MPPConfigNamespace    string
-	OpenShellEnabled      bool
-	OpenShellUseGateway   bool
-	OpenShellRunnerImage  string
-	OpenShellPolicyName   string
-	ServiceIdentity       string
-	CACertFile            string
+	RunnerImage              string
+	RunnerGRPCURL            string
+	RunnerGRPCUseTLS         bool
+	AnthropicAPIKey          string
+	VertexEnabled            bool
+	VertexProjectID          string
+	VertexRegion             string
+	VertexCredentialsPath    string
+	VertexSecretName         string
+	VertexSecretNamespace    string
+	RunnerImageNamespace     string
+	MCPImage                 string
+	MCPAPIServerURL          string
+	GitHubMCPImage           string
+	JiraMCPImage             string
+	K8sMCPImage              string
+	GoogleMCPImage           string
+	RunnerLogLevel           string
+	CPRuntimeNamespace       string
+	CPTokenURL               string
+	CPTokenPublicKey         string
+	HTTPProxy                string
+	HTTPSProxy               string
+	NoProxy                  string
+	ImagePullSecret          string
+	PlatformMode             string
+	MPPConfigNamespace       string
+	OpenShellEnabled         bool
+	OpenShellUseGateway      bool
+	OpenShellRunnerImage     string
+	OpenShellPolicyName      string
+	ServiceIdentity          string
+	CACertFile               string
+	AllowedSandboxRegistries []string
 }
 
 type SimpleKubeReconciler struct {
@@ -281,6 +282,14 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 		return fmt.Errorf("session %s: project %s not found in API server; refusing to provision: %w", session.ID, session.ProjectID, err)
 	}
 
+	var agent *types.Agent
+	if session.AgentID != "" {
+		agent, err = sdk.Agents().Get(ctx, session.AgentID)
+		if err != nil {
+			r.logger.Warn().Err(err).Str("agent_id", session.AgentID).Msg("failed to fetch agent; continuing with defaults")
+		}
+	}
+
 	namespace := r.provisioner.NamespaceName(project.Name)
 	sbxName := openshell.SandboxName(session.ID)
 
@@ -297,10 +306,12 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 		return fmt.Errorf("checking namespace %s: %w", namespace, err)
 	}
 
+	entrypoint := r.resolveEntrypoint(agent)
+
 	existing, err := r.gateway.GetSandbox(ctx, namespace, sbxName)
 	if err == nil && existing != nil && existing.Sandbox != nil {
 		r.logger.Debug().Str("sandbox", sbxName).Msg("sandbox already exists")
-		go r.execAfterReady(namespace, sbxName, session.ID)
+		go r.execAfterReady(namespace, sbxName, session.ID, entrypoint)
 		r.updateSessionPhaseWithNamespace(ctx, session, PhaseRunning, namespace)
 		return nil
 	}
@@ -328,6 +339,7 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 	}
 
 	env := r.buildSandboxEnv(ctx, session, project.Name, sdk, providerNames)
+	r.mergeAgentEnvironment(env, agent)
 
 	for k, v := range env {
 		if strings.ContainsAny(v, "\n\r") {
@@ -335,6 +347,8 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 			delete(env, k)
 		}
 	}
+
+	sandboxImage := r.resolveSandboxImage(agent)
 
 	req := &openshellpb.CreateSandboxRequest{
 		Name: sbxName,
@@ -346,7 +360,7 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 		},
 		Spec: &openshellpb.SandboxSpec{
 			Template: &openshellpb.SandboxTemplate{
-				Image: r.cfg.OpenShellRunnerImage,
+				Image: sandboxImage,
 			},
 			Environment: env,
 			Providers:   providerNames,
@@ -360,16 +374,55 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 	r.logger.Info().
 		Str("sandbox", sbxName).
 		Str("namespace", namespace).
+		Str("image", sandboxImage).
 		Int("providers", len(providerNames)).
 		Msg("sandbox created via gateway")
 
-	go r.execAfterReady(namespace, sbxName, session.ID)
+	go r.execAfterReady(namespace, sbxName, session.ID, entrypoint)
 
 	r.updateSessionPhaseWithNamespace(ctx, session, PhaseRunning, namespace)
 	return nil
 }
 
-func (r *SimpleKubeReconciler) execAfterReady(namespace, sbxName, sessionID string) {
+func (r *SimpleKubeReconciler) resolveEntrypoint(agent *types.Agent) []string {
+	if agent != nil && agent.Entrypoint != "" {
+		return []string{agent.Entrypoint}
+	}
+	return []string{"claude"}
+}
+
+func (r *SimpleKubeReconciler) resolveSandboxImage(agent *types.Agent) string {
+	if agent != nil && agent.SandboxTemplate != nil && agent.SandboxTemplate.Image != "" {
+		if !r.isAllowedRegistry(agent.SandboxTemplate.Image) {
+			r.logger.Warn().Str("agent", agent.Name).Str("image", agent.SandboxTemplate.Image).Strs("allowed", r.cfg.AllowedSandboxRegistries).Msg("sandbox image not in allowed registries, using default image")
+			return r.cfg.RunnerImage
+		}
+		return agent.SandboxTemplate.Image
+	}
+	return r.cfg.OpenShellRunnerImage
+}
+
+func (r *SimpleKubeReconciler) isAllowedRegistry(image string) bool {
+	for _, prefix := range r.cfg.AllowedSandboxRegistries {
+		if strings.HasPrefix(image, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *SimpleKubeReconciler) mergeAgentEnvironment(env map[string]string, agent *types.Agent) {
+	if agent == nil || len(agent.Environment) == 0 {
+		return
+	}
+	for k, v := range agent.Environment {
+		if _, exists := env[k]; !exists {
+			env[k] = v
+		}
+	}
+}
+
+func (r *SimpleKubeReconciler) execAfterReady(namespace, sbxName, sessionID string, entrypoint []string) {
 	pollCtx, pollCancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer pollCancel()
 
@@ -418,7 +471,8 @@ func (r *SimpleKubeReconciler) execAfterReady(namespace, sbxName, sessionID stri
 				Str("sandbox", sbxName).
 				Str("sandbox_id", sandboxID).
 				Str("session_id", sessionID).
-				Msg("sandbox is ready, starting runner via exec")
+				Strs("entrypoint", entrypoint).
+				Msg("sandbox is ready, executing entrypoint")
 
 			execCtx := context.Background()
 			// Patch ndots before starting the runner. The OpenShell supervisor is
@@ -430,7 +484,7 @@ func (r *SimpleKubeReconciler) execAfterReady(namespace, sbxName, sessionID stri
 			// Setting ndots:1 makes musl resolve FQDNs directly.
 			err = r.gateway.ExecSandboxStreaming(execCtx, namespace, &openshellpb.ExecSandboxRequest{
 				SandboxId: sandboxID,
-				Command:   []string{"/bin/bash", "-c", "sed -i 's/ndots:[0-9]*/ndots:1/' /etc/resolv.conf 2>/dev/null; cd /sandbox/runner/ambient-runner && PATH=/sandbox/.venv/bin:$PATH uvicorn main:app --host 0.0.0.0 --port 8001"},
+				Command:   entrypoint,
 			})
 			if err != nil {
 				r.logger.Error().Err(err).Str("sandbox", sbxName).Str("session_id", sessionID).Msg("failed to start runner exec")
@@ -1587,7 +1641,10 @@ func (r *SimpleKubeReconciler) resolveCredentialIDs(ctx context.Context, sdk *sd
 	// If no bindings found, return empty result (no credentials injected)
 	totalBindings := len(agentBindings) + len(projectBindings) + len(globalBindings)
 	if totalBindings == 0 {
-		r.logger.Info().Str("project_id", projectID).Msg("no credential bindings found for project; no credentials will be injected")
+		// Only log when NOT using gateway - gateway resolves credentials from agent provider declarations
+		if !r.cfg.OpenShellUseGateway {
+			r.logger.Info().Str("project_id", projectID).Msg("no credential bindings found for project; no credentials will be injected")
+		}
 		return map[string]string{}, nil
 	}
 

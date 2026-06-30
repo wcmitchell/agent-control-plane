@@ -79,10 +79,9 @@ const agentColumns = [
       )
     },
   }),
-  col.display({
-    id: 'lastActive',
-    header: 'Last Active',
-    enableSorting: true,
+  col.accessor('updatedAt', {
+    id: 'lastUpdated',
+    header: 'Last Updated',
     sortingFn: (rowA, rowB) => {
       return new Date(rowA.original.updatedAt).getTime() - new Date(rowB.original.updatedAt).getTime()
     },
@@ -105,7 +104,7 @@ export function AgentsTable({
   const { projectId } = useParams<{ projectId: string }>()
   const containerRef = useRef<HTMLDivElement>(null)
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'lastActive', desc: true },
+    { id: 'lastUpdated', desc: true },
   ])
 
   const table = useReactTable({

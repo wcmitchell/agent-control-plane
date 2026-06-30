@@ -16,7 +16,7 @@
 .DEFAULT_GOAL := help
 
 # Configuration
-CONTAINER_ENGINE ?= podman
+CONTAINER_ENGINE ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
 
 # Auto-detect host architecture for native builds
 # Override with PLATFORM=linux/amd64 or PLATFORM=linux/arm64 if needed
@@ -195,6 +195,7 @@ build-ambient-ui: ## Build ambient-ui image
 	@cd components && $(CONTAINER_ENGINE) build $(PLATFORM_FLAG) $(BUILD_FLAGS) \
 		-f ambient-ui/Dockerfile \
 		--build-arg GIT_COMMIT=$(shell git rev-parse HEAD) \
+		--build-arg OPENSHELL_USE_GATEWAY=$(OPENSHELL_USE_GATEWAY) \
 		-t $(AMBIENT_UI_IMAGE) .
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Ambient UI built: $(AMBIENT_UI_IMAGE)"
 
@@ -1107,6 +1108,7 @@ kind-reload-ambient-ui: check-kind check-kubectl check-local-context ## Rebuild 
 	@cd components && $(CONTAINER_ENGINE) build $(PLATFORM_FLAG) \
 		-f ambient-ui/Dockerfile \
 		--build-arg GIT_COMMIT=$(shell git rev-parse HEAD) \
+		--build-arg OPENSHELL_USE_GATEWAY=$(OPENSHELL_USE_GATEWAY) \
 		-t $(AMBIENT_UI_IMAGE) . $(QUIET_REDIRECT)
 	$(call kind-reload-component,$(AMBIENT_UI_IMAGE),ambient-ui,Ambient UI,ambient-ui)
 
@@ -1115,15 +1117,20 @@ kind-reload-ambient-control-plane: check-kind check-kubectl check-local-context 
 	@$(CONTAINER_ENGINE) build $(PLATFORM_FLAG) $(BUILD_FLAGS) \
 		-f components/ambient-control-plane/Dockerfile \
 		--build-arg GIT_COMMIT=$(shell git rev-parse HEAD) \
-		-t $(CONTROL_PLANE_IMAGE) components $(QUIET_REDIRECT)
+		-t $(CONTROL_PLANE_IMAGE) components $(QUIET_REDIRECT) || \
+		{ echo "$(COLOR_RED)✗$(COLOR_RESET) Build failed. Run without QUIET=1 for full output."; exit 1; }
 	$(call kind-reload-component,$(CONTROL_PLANE_IMAGE),ambient-control-plane,Ambient control plane,ambient-control-plane)
 
 kind-reload-ambient-api-server: check-kind check-kubectl check-local-context ## Rebuild and reload ambient-api-server only (kind)
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Rebuilding ambient-api-server..."
 	@cd components/ambient-api-server && $(CONTAINER_ENGINE) build $(PLATFORM_FLAG) $(BUILD_FLAGS) \
 		--build-arg GIT_COMMIT=$(shell git rev-parse HEAD) \
-		-t $(API_SERVER_IMAGE) . $(QUIET_REDIRECT)
+		-t $(API_SERVER_IMAGE) . $(QUIET_REDIRECT) || \
+		{ echo "$(COLOR_RED)✗$(COLOR_RESET) Build failed. Run without QUIET=1 for full output."; exit 1; }
 	$(call kind-reload-component,$(API_SERVER_IMAGE),ambient-api-server,Ambient API server,api-server)
+	@_IMG=$$(kubectl get deployment ambient-api-server -n $(NAMESPACE) -o jsonpath='{.spec.template.spec.containers[0].image}') && \
+		kubectl set image deployment/ambient-api-server -n $(NAMESPACE) migration=$$_IMG $(QUIET_REDIRECT) && \
+		echo "$(COLOR_GREEN)✓$(COLOR_RESET) Migration init container updated to $$_IMG"
 
 kind-sso-toggle: check-kubectl ## Toggle SSO auth on/off in Kind (affects both frontend and backend)
 	@UNLEASH_ADMIN_TOKEN=$$(kubectl get secret unleash-credentials -n $(NAMESPACE) -o jsonpath='{.data.admin-api-token}' | base64 -d); \
