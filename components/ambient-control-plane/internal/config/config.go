@@ -49,6 +49,7 @@ type ControlPlaneConfig struct {
 	ImagePullSecret                 string
 	OpenShellEnabled                bool
 	OpenShellUseGateway             bool
+	OpenShellRunnerImage            string
 	OpenShellPolicyName             string
 	OpenShellGatewayServiceName     string
 	OpenShellGatewayGRPCPort        int
@@ -56,6 +57,7 @@ type ControlPlaneConfig struct {
 	OpenShellGatewayClientTLSSecret string
 	OpenShellGatewayTLSServerName   string
 	ServiceIdentity                 string
+	CACertFile                      string
 }
 
 func Load() (*ControlPlaneConfig, error) {
@@ -101,6 +103,7 @@ func Load() (*ControlPlaneConfig, error) {
 		ImagePullSecret:                 os.Getenv("IMAGE_PULL_SECRET"),
 		OpenShellEnabled:                os.Getenv("OPENSHELL_ENABLED") == "true",
 		OpenShellUseGateway:             os.Getenv("OPENSHELL_USE_GATEWAY") == "true",
+		OpenShellRunnerImage:            envOrDefault("OPENSHELL_RUNNER_IMAGE", "quay.io/ambient_code/acp_runner_openshell:latest"),
 		OpenShellPolicyName:             envOrDefault("OPENSHELL_POLICY_CONFIGMAP", "openshell-policy"),
 		OpenShellGatewayServiceName:     envOrDefault("OPENSHELL_GATEWAY_SERVICE_NAME", "openshell-gateway"),
 		OpenShellGatewayGRPCPort:        envOrDefaultInt("OPENSHELL_GATEWAY_GRPC_PORT", 8080),
@@ -108,6 +111,7 @@ func Load() (*ControlPlaneConfig, error) {
 		OpenShellGatewayClientTLSSecret: envOrDefault("OPENSHELL_GATEWAY_CLIENT_TLS_SECRET", "openshell-client-tls"),
 		OpenShellGatewayTLSServerName:   os.Getenv("OPENSHELL_GATEWAY_TLS_SERVER_NAME"),
 		ServiceIdentity:                 strings.TrimSpace(os.Getenv("GRPC_SERVICE_ACCOUNT")),
+		CACertFile:                      envOrDefault("CA_CERT_FILE", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"),
 	}
 
 	if cfg.MCPAPIServerURL == "" {

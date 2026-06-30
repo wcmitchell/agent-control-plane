@@ -13,7 +13,7 @@ ARG GEMINI_CLI_VERSION=0.1.17
 
 # Install system packages: Python 3.12, git, jq, Node.js, Go, unzip (needed by CodeRabbit install script)
 # iproute provides ip-netns for OpenShell network namespace setup
-RUN dnf install -y python3 python3-pip python3-devel \
+RUN dnf install -y --allowerasing --nodocs python3 python3-pip python3-devel \
     git jq nodejs npm go-toolset unzip iproute && \
     dnf clean all
 
@@ -50,8 +50,8 @@ WORKDIR /app
 COPY . /app/ambient-runner
 
 # OpenShell wrapper script (dispatches to supervisor or direct claude based on OPENSHELL_ENABLED)
-COPY openshell-claude-wrapper.sh /app/openshell-claude-wrapper.sh
-RUN chmod +x /app/openshell-claude-wrapper.sh
+COPY standard-claude-wrapper.sh /app/standard-claude-wrapper.sh
+RUN chmod +x /app/standard-claude-wrapper.sh
 
 # Install runner as a package, then remove build-only deps in same layer
 RUN pip3 install --break-system-packages --no-cache-dir '/app/ambient-runner[all]' && \

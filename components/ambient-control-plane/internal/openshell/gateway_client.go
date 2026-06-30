@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 
+	inferencepb "github.com/ambient-code/platform/components/ambient-control-plane/internal/openshell/grpc/openshell/inference/v1"
 	pb "github.com/ambient-code/platform/components/ambient-control-plane/internal/openshell/grpc/openshell/v1"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
@@ -206,6 +207,111 @@ func (g *GatewayClient) ExecSandbox(ctx context.Context, namespace string, req *
 		}
 	}
 	return result, nil
+}
+
+func (g *GatewayClient) inferenceClientForNamespace(ctx context.Context, namespace string) (inferencepb.InferenceClient, error) {
+	conn, err := g.getOrCreateConn(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	return inferencepb.NewInferenceClient(conn), nil
+}
+
+func (g *GatewayClient) SetClusterInference(ctx context.Context, namespace string, req *inferencepb.SetClusterInferenceRequest) (*inferencepb.SetClusterInferenceResponse, error) {
+	client, err := g.inferenceClientForNamespace(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.SetClusterInference(ctx, req)
+	if err != nil && g.shouldEvict(err) {
+		g.evictConn(namespace)
+	}
+	return resp, err
+}
+
+func (g *GatewayClient) ConfigureProviderRefresh(ctx context.Context, namespace string, req *pb.ConfigureProviderRefreshRequest) (*pb.ConfigureProviderRefreshResponse, error) {
+	client, err := g.clientForNamespace(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.ConfigureProviderRefresh(ctx, req)
+	if err != nil && g.shouldEvict(err) {
+		g.evictConn(namespace)
+	}
+	return resp, err
+}
+
+func (g *GatewayClient) RotateProviderCredential(ctx context.Context, namespace string, req *pb.RotateProviderCredentialRequest) (*pb.RotateProviderCredentialResponse, error) {
+	client, err := g.clientForNamespace(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.RotateProviderCredential(ctx, req)
+	if err != nil && g.shouldEvict(err) {
+		g.evictConn(namespace)
+	}
+	return resp, err
+}
+
+const maxLogChunkSize = 512
+
+func (g *GatewayClient) ExecSandboxStreaming(ctx context.Context, namespace string, req *pb.ExecSandboxRequest) error {
+	client, err := g.clientForNamespace(ctx, namespace)
+	if err != nil {
+		return err
+	}
+	stream, err := client.ExecSandbox(ctx, req)
+	if err != nil {
+		if g.shouldEvict(err) {
+			g.evictConn(namespace)
+		}
+		return err
+	}
+
+	go func() {
+		for {
+			event, err := stream.Recv()
+			if err == io.EOF {
+				g.logger.Debug().Str("sandbox_id", req.SandboxId).Msg("exec stream ended")
+				return
+			}
+			if err != nil {
+				g.logger.Warn().Err(err).Str("sandbox_id", req.SandboxId).Msg("exec stream error")
+				return
+			}
+			switch p := event.Payload.(type) {
+			case *pb.ExecSandboxEvent_Stdout:
+				chunk := p.Stdout.Data
+				if len(chunk) > maxLogChunkSize {
+					chunk = chunk[:maxLogChunkSize]
+				}
+				g.logger.Debug().Str("sandbox_id", req.SandboxId).Str("stdout", string(chunk)).Msg("exec stdout")
+			case *pb.ExecSandboxEvent_Stderr:
+				chunk := p.Stderr.Data
+				if len(chunk) > maxLogChunkSize {
+					chunk = chunk[:maxLogChunkSize]
+				}
+				g.logger.Debug().Str("sandbox_id", req.SandboxId).Str("stderr", string(chunk)).Msg("exec stderr")
+			case *pb.ExecSandboxEvent_Exit:
+				g.logger.Info().Str("sandbox_id", req.SandboxId).Int32("exit_code", p.Exit.ExitCode).Msg("exec process exited")
+				return
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (g *GatewayClient) UpdateConfig(ctx context.Context, namespace string, req *pb.UpdateConfigRequest) (*pb.UpdateConfigResponse, error) {
+	client, err := g.clientForNamespace(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.UpdateConfig(ctx, req)
+	if err != nil && g.shouldEvict(err) {
+		g.evictConn(namespace)
+	}
+	return resp, err
 }
 
 func (g *GatewayClient) Close() error {
