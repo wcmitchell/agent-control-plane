@@ -33,6 +33,7 @@ func NewProjectHandler(project ProjectService, generic services.GenericService, 
 }
 
 func (h projectHandler) Create(w http.ResponseWriter, r *http.Request) {
+
 	var project openapi.Project
 	cfg := &handlers.HandlerConfig{
 		Body: &project,
@@ -55,6 +56,7 @@ func (h projectHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h projectHandler) Patch(w http.ResponseWriter, r *http.Request) {
+
 	var patch openapi.ProjectPatchRequest
 
 	cfg := &handlers.HandlerConfig{
@@ -157,6 +159,7 @@ func (h projectHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h projectHandler) Delete(w http.ResponseWriter, r *http.Request) {
+
 	cfg := &handlers.HandlerConfig{
 		Action: func() (interface{}, *errors.ServiceError) {
 			id := mux.Vars(r)["id"]

@@ -2,3 +2,5 @@ kind: Kustomization
 resources:
   - hello-world.yaml
   - security-reviewer.yaml
+  - jira-simple-whoami.yaml
+  - jira-simple-whoami-with-skill-payload.yaml

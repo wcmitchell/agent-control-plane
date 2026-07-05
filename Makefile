@@ -120,6 +120,7 @@ ANTHROPIC_VERTEX_PROJECT_ID ?= $(shell echo $$ANTHROPIC_VERTEX_PROJECT_ID)
 CLOUD_ML_REGION ?= $(shell echo $$CLOUD_ML_REGION)
 # Default to ADC location if not set (created by: gcloud auth application-default login)
 GOOGLE_APPLICATION_CREDENTIALS ?= $(or $(shell echo $$GOOGLE_APPLICATION_CREDENTIALS),$(HOME)/.config/gcloud/application_default_credentials.json)
+VERTEX_CRED ?= $(GOOGLE_APPLICATION_CREDENTIALS)
 
 # OpenShell Gateway Configuration (OPENSHELL_USE_GATEWAY=true by default)
 # Provisions two tenant namespaces (tenant-a, tenant-b) with an OpenShell gateway each.
@@ -274,7 +275,9 @@ build-credential-google: ## Build Google credential sidecar image
 build-cli: ## Build acpctl CLI binary
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building acpctl CLI..."
 	@cd components/ambient-cli && make build
-	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) CLI built: components/ambient-cli/acpctl"
+	@install -d $(HOME)/.local/bin
+	@install components/ambient-cli/acpctl $(HOME)/.local/bin/acpctl
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) CLI built and installed: $(HOME)/.local/bin/acpctl"
 
 lint-cli: ## Lint acpctl CLI
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Linting acpctl CLI..."
@@ -867,7 +870,7 @@ benchmark-ci: ## Run component benchmarks in CI mode
 		$(if $(CANDIDATE),--candidate-ref $(CANDIDATE)) \
 		$(if $(FORMAT),--format $(FORMAT))
 
-kind-up: preflight-cluster ## Start kind cluster and deploy the platform (LOCAL_IMAGES=true builds from source)
+kind-up: preflight-cluster build-cli ## Start kind cluster and deploy the platform (LOCAL_IMAGES=true builds from source)
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Starting kind cluster '$(KIND_CLUSTER_NAME)'..."
 	@KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) KIND_HTTP_PORT=$(KIND_HTTP_PORT) KIND_HTTPS_PORT=$(KIND_HTTPS_PORT) KIND_HOST=$(KIND_HOST) CONTAINER_ENGINE=$(CONTAINER_ENGINE) ./tests/infra/setup-kind.sh
 	@if [ -n "$(KIND_HOST)" ]; then \
@@ -938,19 +941,7 @@ kind-up: preflight-cluster ## Start kind cluster and deploy the platform (LOCAL_
 		CLOUD_ML_REGION="$(CLOUD_ML_REGION)" \
 		./scripts/setup-kind-openshell.sh; \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Applying tenant fleet definitions via acpctl..."; \
-		ACPCTL=""; \
-		if command -v acpctl >/dev/null 2>&1; then \
-			ACPCTL=acpctl; \
-		elif [ -x components/ambient-cli/acpctl ]; then \
-			ACPCTL=components/ambient-cli/acpctl; \
-		elif [ -x ./acpctl ]; then \
-			ACPCTL=./acpctl; \
-		fi; \
-		if [ -z "$$ACPCTL" ]; then \
-			echo "$(COLOR_BLUE)▶$(COLOR_RESET) acpctl not found — building CLI..."; \
-			$(MAKE) --no-print-directory build-cli; \
-			ACPCTL=components/ambient-cli/acpctl; \
-		fi; \
+		ACPCTL=components/ambient-cli/acpctl; \
 		PF_PORT=18766; \
 		kubectl port-forward -n $(NAMESPACE) svc/ambient-api-server "$${PF_PORT}:8000" >/dev/null 2>&1 & \
 		PF_PID=$$!; \
@@ -974,7 +965,7 @@ kind-up: preflight-cluster ## Start kind cluster and deploy the platform (LOCAL_
 	@# Vertex AI setup if requested (non-gateway)
 	@if [ "$(OPENSHELL_USE_GATEWAY)" != "true" ]; then \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Configuring Vertex AI..."; \
-		$(MAKE) --no-print-directory kind-setup-vertex; \
+		$(MAKE) --no-print-directory kind-setup-vertex VERTEX_CRED="$(VERTEX_CRED)"; \
 	fi
 	@if [ -f .dev-bootstrap.env ] && [ -f ./scripts/bootstrap-workspace.sh ]; then \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Bootstrapping developer workspace..."; \
@@ -1333,6 +1324,9 @@ kind-setup-vertex: check-kubectl _kind-require-cluster ## Configure Vertex AI fo
 		done; \
 	else \
 		NAMESPACE=$(NAMESPACE) \
+			GOOGLE_APPLICATION_CREDENTIALS="$(GOOGLE_APPLICATION_CREDENTIALS)" \
+			ANTHROPIC_VERTEX_PROJECT_ID="$(ANTHROPIC_VERTEX_PROJECT_ID)" \
+			CLOUD_ML_REGION="$(CLOUD_ML_REGION)" \
 			AMBIENT_UI_URL="http://$$(if [ -n "$(KIND_HOST)" ]; then echo "$(KIND_HOST)"; else echo "localhost"; fi):$(KIND_FWD_AMBIENT_UI_PORT)" \
 			./scripts/setup-vertex-kind.sh; \
 	fi

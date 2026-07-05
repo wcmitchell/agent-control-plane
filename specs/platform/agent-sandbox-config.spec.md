@@ -1,6 +1,6 @@
 # Agent Sandbox Configuration
 
-**Date:** 2026-06-25
+**Date:** 2026-07-05
 **Status:** Proposed
 **Related:** `specs/platform/data-model.spec.md` (Agent entity), `specs/platform/openshell-sandbox-provisioning.spec.md` (gateway-mode sandbox provisioning — Iteration 1), `specs/security/openshell-sandbox.spec.md` (file-mode sandbox isolation), `specs/security/credential-binding.spec.md` (credential resolution), `specs/platform/control-plane.spec.md` (session provisioning), `specs/platform/runner.spec.md` (runner lifecycle — being replaced)
 
@@ -165,7 +165,7 @@ data:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Unique provider name within the namespace. This is the name agents use to reference the provider. |
-| `type` | string | yes | ACP credential type (e.g., `github`, `anthropic`, `jira`, `vertex`, `kubeconfig`). The control plane maps this to the corresponding OpenShell provider type at sandbox creation time — see [Credential-to-Provider Type Mapping](#credential-to-provider-type-mapping). |
+| `type` | string | yes | ACP credential type (e.g., `github`, `anthropic`, `jira`, `vertex`, `kubeconfig`, `generic`). The control plane maps this to the corresponding OpenShell provider type at sandbox creation time — see [Credential-to-Provider Type Mapping](#credential-to-provider-type-mapping). |
 | `secret` | string | yes | Name of a Kubernetes Secret in the tenant namespace that holds the credential for this provider (e.g., `github-pat`). The Secret must exist in the same namespace as the provider ConfigMap. |
 
 > **Transitional mechanism.** Currently, ACP must read the Secret from Kubernetes, extract the credential value, and pass it over gRPC to the gateway to configure the OpenShell provider. Once [NVIDIA/OpenShell#1882](https://github.com/NVIDIA/OpenShell/issues/1882) is resolved, ACP should be able to pass the Secret name directly to the gateway, which will load and read the credentials itself — eliminating the need for ACP to handle credential values in transit.
@@ -182,8 +182,8 @@ When the control plane creates OpenShell providers on the gateway, it maps ACP c
 | `anthropic` | `claude` |
 | `claude` | `claude` |
 | `jira` | `generic` |
-| `google` | `vertex-prod` |
-| `vertex` | `vertex-prod` |
+| `google` | `generic` |
+| `vertex` | `google-vertex-ai` |
 | `kubeconfig` | `generic` |
 
 Credential types not in this table are mapped to `generic`. The mapping may be extended as new credential types are added.
@@ -438,6 +438,8 @@ The agent YAML SHALL declare which providers the agent requires as an array of p
 ### Requirement: Payload Injection
 
 The agent YAML SHALL declare payloads to deliver into the sandbox before the entrypoint launches. Each payload specifies a `sandbox_path` and exactly one source: `content` (inline) or `repo_url` (git clone).
+
+**Delivery mechanism:** Inline content payloads are delivered via SSH-over-gRPC, following the OpenShell CLI's upload pattern. The control plane opens an SSH session through the gateway (`CreateSshSession` → `ForwardTcp` stream → SSH handshake) and writes each payload file via `mkdir -p <dir> && cat > <path>` with the content piped to stdin. This runs as root through the supervisor's embedded SSH server, bypassing the sandbox's read-only root filesystem restriction that prevents writes via `ExecSandbox`.
 
 #### Scenario: Inline content payload (prompt)
 
@@ -821,6 +823,8 @@ This spec describes the complete desired state. Implementation is expected to pr
 - Reconciliation of ConfigMap-declared agents into the `agents` table
 - Session provisioning from ConfigMap-declared agents via the gateway (building on Iteration 1)
 - `acpctl apply` support for agent declaration ConfigMaps
+
+> **Known gap (PR #246):** The `ApplicationReconciler`'s `gitAgentDeclaration` struct currently supports `name`, `display_name`, `description`, `prompt`, `entrypoint`, `providers`, `payloads`, `environment`, `repo_url`, `llm_model`, `labels`, and `annotations` — but does NOT include `sandbox_template` or `sandbox_policy`. Git-sourced agent declarations cannot yet declare compute resources or custom sandbox policies. The `UploadPayloads` SSH mechanism (Iteration 1) is wired to `agent.Payloads` at sandbox creation time, so payload delivery works end-to-end for git-sourced agents.
 
 **Depends on:** Iteration 1 (gateway provisioning)
 

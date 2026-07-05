@@ -53,6 +53,10 @@ File format (one or more documents separated by ---):
     ambient.io/ready: "true"
   annotations:
     work.ambient.io/current-task: ""
+  payloads:
+    - sandbox_path: /workspace/config.yaml
+      content: |
+        key: value
   inbox:
     - from_name: platform-bootstrap
       body: |
@@ -113,6 +117,8 @@ type resource struct {
 	Annotations map[string]string `yaml:"annotations"`
 	Inbox       []inboxSeed       `yaml:"inbox"`
 	Providers   []string          `yaml:"providers"`
+	Payloads    []payloadDecl     `yaml:"payloads"`
+	Environment map[string]string `yaml:"environment"`
 	Provider    string            `yaml:"provider"`
 	Token       string            `yaml:"token"`
 	URL         string            `yaml:"url"`
@@ -123,6 +129,13 @@ type resource struct {
 	Scope       string            `yaml:"scope"`
 	ScopeID     string            `yaml:"scope_id"`
 	UserID      string            `yaml:"user_id"`
+}
+
+type payloadDecl struct {
+	SandboxPath string `yaml:"sandbox_path"`
+	Content     string `yaml:"content,omitempty"`
+	RepoURL     string `yaml:"repo_url,omitempty"`
+	Ref         string `yaml:"ref,omitempty"`
 }
 
 type inboxSeed struct {
@@ -618,6 +631,19 @@ func docDisplayName(d resource) string {
 	return d.Kind
 }
 
+func toSDKPayloads(decls []payloadDecl) []sdktypes.Payload {
+	out := make([]sdktypes.Payload, len(decls))
+	for i, d := range decls {
+		out[i] = sdktypes.Payload{
+			SandboxPath: d.SandboxPath,
+			Content:     d.Content,
+			RepoURL:     d.RepoURL,
+			Ref:         d.Ref,
+		}
+	}
+	return out
+}
+
 func marshalStringMap(m map[string]string) string {
 	if len(m) == 0 {
 		return ""
@@ -667,6 +693,12 @@ func applyAgent(ctx context.Context, client *sdkclient.Client, doc resource, pro
 		if len(doc.Providers) > 0 {
 			builder = builder.Providers(doc.Providers)
 		}
+		if len(doc.Payloads) > 0 {
+			builder = builder.Payloads(toSDKPayloads(doc.Payloads))
+		}
+		if len(doc.Environment) > 0 {
+			builder = builder.Environment(doc.Environment)
+		}
 		pa, buildErr := builder.Build()
 		if buildErr != nil {
 			return applyResult{}, buildErr
@@ -714,6 +746,12 @@ func buildAgentPatch(existing *sdktypes.Agent, doc resource) map[string]any {
 	}
 	if len(doc.Providers) > 0 {
 		patch["providers"] = doc.Providers
+	}
+	if len(doc.Payloads) > 0 {
+		patch["payloads"] = toSDKPayloads(doc.Payloads)
+	}
+	if len(doc.Environment) > 0 {
+		patch["environment"] = doc.Environment
 	}
 	if len(doc.Labels) > 0 {
 		patch["labels"] = marshalStringMap(doc.Labels)
@@ -966,6 +1004,15 @@ func strategicMerge(base, patch resource) resource {
 	}
 	if patch.Email != "" {
 		base.Email = patch.Email
+	}
+	if len(patch.Payloads) > 0 {
+		base.Payloads = patch.Payloads
+	}
+	for k, v := range patch.Environment {
+		if base.Environment == nil {
+			base.Environment = make(map[string]string)
+		}
+		base.Environment[k] = v
 	}
 	for k, v := range patch.Labels {
 		if base.Labels == nil {

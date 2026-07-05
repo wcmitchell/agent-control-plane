@@ -25,6 +25,7 @@ func NewPolicyHandler(policy PolicyService, generic services.GenericService) *po
 }
 
 func (h policyHandler) Create(w http.ResponseWriter, r *http.Request) {
+
 	var policy openapi.Policy
 	cfg := &handlers.HandlerConfig{
 		Body: &policy,
@@ -104,6 +105,7 @@ func (h policyHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h policyHandler) Patch(w http.ResponseWriter, r *http.Request) {
+
 	var patch openapi.PolicyPatchRequest
 	cfg := &handlers.HandlerConfig{
 		Body:       &patch,
@@ -153,6 +155,7 @@ func (h policyHandler) Patch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h policyHandler) Delete(w http.ResponseWriter, r *http.Request) {
+
 	cfg := &handlers.HandlerConfig{
 		Action: func() (interface{}, *errors.ServiceError) {
 			projectID := mux.Vars(r)["id"]

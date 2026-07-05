@@ -76,6 +76,7 @@ func TestAgentGet(t *testing.T) {
 }
 
 func TestAgentPost(t *testing.T) {
+
 	h, client := test.RegisterIntegration(t)
 
 	account := h.NewRandAccount()
@@ -126,6 +127,7 @@ func TestAgentPost(t *testing.T) {
 }
 
 func TestAgentPostLlmDefaults(t *testing.T) {
+
 	h, client := test.RegisterIntegration(t)
 
 	account := h.NewRandAccount()
@@ -153,6 +155,7 @@ func TestAgentPostLlmDefaults(t *testing.T) {
 }
 
 func TestAgentPatch(t *testing.T) {
+
 	h, client := test.RegisterIntegration(t)
 
 	account := h.NewRandAccount()
@@ -206,6 +209,7 @@ func TestAgentPatch(t *testing.T) {
 }
 
 func TestAgentPatchTemperatureZeroPreserved(t *testing.T) {
+
 	h, client := test.RegisterIntegration(t)
 
 	account := h.NewRandAccount()
@@ -309,6 +313,7 @@ func TestAgentListSearch(t *testing.T) {
 }
 
 func TestAgentDelete(t *testing.T) {
+
 	h, client := test.RegisterIntegration(t)
 
 	account := h.NewRandAccount()
@@ -337,6 +342,7 @@ func TestAgentDelete(t *testing.T) {
 }
 
 func TestAgentCrossProjectIsolation(t *testing.T) {
+
 	h, client := test.RegisterIntegration(t)
 
 	account := h.NewRandAccount()

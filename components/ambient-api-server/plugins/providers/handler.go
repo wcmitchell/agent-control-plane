@@ -24,6 +24,7 @@ func NewProviderHandler(provider ProviderService, generic services.GenericServic
 }
 
 func (h providerHandler) Create(w http.ResponseWriter, r *http.Request) {
+
 	var provider openapi.Provider
 	cfg := &handlers.HandlerConfig{
 		Body: &provider,
@@ -103,6 +104,7 @@ func (h providerHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h providerHandler) Patch(w http.ResponseWriter, r *http.Request) {
+
 	var patch openapi.ProviderPatchRequest
 	cfg := &handlers.HandlerConfig{
 		Body:       &patch,
@@ -150,6 +152,7 @@ func (h providerHandler) Patch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h providerHandler) Delete(w http.ResponseWriter, r *http.Request) {
+
 	cfg := &handlers.HandlerConfig{
 		Action: func() (interface{}, *errors.ServiceError) {
 			projectID := mux.Vars(r)["id"]
