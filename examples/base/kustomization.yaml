@@ -3,3 +3,5 @@ resources:
   - agents/hello-world.yaml
   - agents/security-reviewer.yaml
   - agents/jira-simple-whoami.yaml
+  - agents/pr-reviewer.yaml
+  - agents/jira-issue-categorizer.yaml
