@@ -815,10 +815,15 @@ else
   skip "Scenario 33: agent:runner role not found"
 fi
 
-# Also test credential:token-reader (internal role)
+# credential:token-reader is NOT internal (only agent:runner is). Owner (level 1)
+# can grant it (level 2) because it is credential-scoped — the owner already has
+# full access to the credential's token, so delegation is safe. The GetToken
+# handler independently verifies the caller's credential scope as defense-in-depth.
 if [[ -n "$ROLE_CRED_TOKEN_READER" ]]; then
-  api POST "/role_bindings" "$TOKEN_A" "{\"role_id\":\"${ROLE_CRED_TOKEN_READER}\",\"scope\":\"credential\",\"user_id\":\"rbac-user-b\",\"credential_id\":\"${CRED_A_ID}\"}"
-  assert_status "403" "$HTTP_STATUS" "Scenario 33: Granting credential:token-reader (internal role) rejected"
+  api POST "/role_bindings" "$TOKEN_A" "{\"role_id\":\"${ROLE_CRED_TOKEN_READER}\",\"scope\":\"credential\",\"user_id\":\"rbac-user-b\",\"credential_id\":\"${CRED_A_ID}\",\"project_id\":\"rbac-proj-alpha\"}"
+  assert_status "201" "$HTTP_STATUS" "Scenario 33: Owner delegates credential:token-reader (credential-scoped, owner already has full access)"
+  local_bid=$(echo "$HTTP_BODY" | jq -r '.id // empty')
+  [[ -n "$local_bid" ]] && api DELETE "/role_bindings/${local_bid}" "$TOKEN_A"
 else
   skip "Scenario 33: credential:token-reader role not found"
 fi
@@ -1020,9 +1025,16 @@ MATRIX_VIEWER_BIND=$(echo "$HTTP_BODY" | jq -r '.id // empty')
 # Derive expected result from hierarchy rule:
 #   admin (0): can grant anything (including admin)
 #   others: can only grant strictly below (caller_level < target_level)
-#   internal roles: always 403
+#   internal roles (is_internal=yes): always 403 regardless of caller level
 #
-# Format: "role_name:role_id_var:level:internal"
+# Design note on credential:token-reader (level 2, NOT internal):
+#   This role grants fetch_token on a single credential (always credential-scoped,
+#   never global). Credential owners already have full access to their own tokens,
+#   so delegating read access is an owner-level decision. The GetToken handler
+#   enforces a second scope check (AuthResult.CredentialIDs) as defense-in-depth.
+#   Only agent:runner remains internal — it is machine-only and never user-grantable.
+#
+# Format: "role_name|role_id_var|level|internal"
 GRANTABLE_ROLES=(
   "project:owner|ROLE_PROJECT_OWNER|1|no"
   "project:editor|ROLE_PROJECT_EDITOR|2|no"
@@ -1033,7 +1045,7 @@ GRANTABLE_ROLES=(
   "credential:owner|ROLE_CREDENTIAL_OWNER|1|no"
   "credential:viewer|ROLE_CREDENTIAL_VIEWER|2|no"
   "agent:runner|ROLE_AGENT_RUNNER|0|yes"
-  "credential:token-reader|ROLE_CRED_TOKEN_READER|0|yes"
+  "credential:token-reader|ROLE_CRED_TOKEN_READER|2|no"    # see design note above
 )
 
 # Format: "label|token_var|level"
@@ -1509,7 +1521,7 @@ echo -e "${BOLD}Phase 26: Credential Binding Enforcement (spec: credential-bindi
 #   - agent not belonging to project is rejected (400)
 #   - global credential bindings require platform:admin
 #   - project:editor can unbind without credential:owner (asymmetric)
-#   - non-admin users cannot create internal role bindings (credential:token-reader)
+#   - owner can delegate credential:token-reader (credential-scoped; owner already has full token access)
 
 # Setup: give User B project:editor on proj-alpha for this phase
 api POST "/role_bindings" "$TOKEN_A" "{\"role_id\":\"${ROLE_PROJECT_EDITOR}\",\"scope\":\"project\",\"user_id\":\"rbac-user-b\",\"project_id\":\"rbac-proj-alpha\"}"
@@ -1606,12 +1618,17 @@ else
 fi
 [[ -n "$CB_VIEWER_BIND_2" ]] && api DELETE "/role_bindings/${CB_VIEWER_BIND_2}" "$TOKEN_A"
 
-# --- Scenario: non-admin user cannot create credential:token-reader binding (internal role) ---
+# --- Scenario: owner delegates credential:token-reader on own credential ---
+# Safe because: (1) binding is credential-scoped to a single credential ID,
+# (2) the owner already has full access to the token, (3) GetToken handler
+# checks AuthResult.CredentialIDs as defense-in-depth.
 if [[ -n "$ROLE_CRED_TOKEN_READER" ]]; then
-  api POST "/role_bindings" "$TOKEN_A" "{\"role_id\":\"${ROLE_CRED_TOKEN_READER}\",\"scope\":\"credential\",\"user_id\":\"rbac-user-a\",\"credential_id\":\"${CRED_A_ID}\"}"
-  assert_status "403" "$HTTP_STATUS" "CB: non-admin cannot create credential:token-reader binding"
+  api POST "/role_bindings" "$TOKEN_A" "{\"role_id\":\"${ROLE_CRED_TOKEN_READER}\",\"scope\":\"credential\",\"user_id\":\"rbac-user-a\",\"credential_id\":\"${CRED_A_ID}\",\"project_id\":\"rbac-proj-alpha\"}"
+  assert_status "201" "$HTTP_STATUS" "CB: owner delegates credential:token-reader (credential-scoped, defense-in-depth in GetToken handler)"
+  local_bid=$(echo "$HTTP_BODY" | jq -r '.id // empty')
+  [[ -n "$local_bid" ]] && api DELETE "/role_bindings/${local_bid}" "$TOKEN_A"
 else
-  skip "CB: token-reader internal role test (role not found)"
+  skip "CB: token-reader role test (role not found)"
 fi
 
 # Cleanup phase bindings
