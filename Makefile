@@ -10,7 +10,7 @@
 .PHONY: kind-port-forward kind-port-forward-stop _kind-start-port-forward kind-acpctl-login kind-apply-examples
 .PHONY: setup-minio minio-console minio-logs minio-status
 .PHONY: validate-makefile lint-makefile check-shell makefile-health benchmark benchmark-ci
-.PHONY: _create-operator-config _auto-port-forward _show-access-info _kind-load-images
+.PHONY: _create-operator-config _auto-port-forward _show-access-info _kind-load-images _kind-preload-runner
 .PHONY: build-credential-sidecars build-credential-github build-credential-jira build-credential-k8s build-credential-google
 
 # Default target
@@ -71,6 +71,10 @@ GOOGLE_MCP_IMAGE ?= acp_credential_google:$(IMAGE_TAG)
 AMBIENT_UI_IMAGE ?= acp_ambient_ui:$(IMAGE_TAG)
 CONTROL_PLANE_IMAGE ?= acp_control_plane:$(IMAGE_TAG)
 MCP_IMAGE ?= acp_mcp:$(IMAGE_TAG)
+
+# Quay runner image reference and tag for kind pre-loading
+RUNNER_QUAY_IMAGE ?= quay.io/ambient_code/acp_runner_openshell
+RUNNER_PRELOAD_TAG ?= kind-preloaded
 
 # kind-local overlay always references localhost/acp_* images.
 # Podman produces this prefix natively; for Docker we tag before loading.
@@ -915,6 +919,10 @@ kind-up: preflight-cluster build-cli ## Start kind cluster and deploy the platfo
 	else \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Deploying with Quay.io images..."; \
 		kubectl apply --validate=false -k components/manifests/overlays/kind/; \
+		$(MAKE) --no-print-directory _kind-preload-runner; \
+		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Patching control plane to use pre-loaded runner image..."; \
+		kubectl set env deployment/ambient-control-plane -n $(NAMESPACE) \
+			OPENSHELL_RUNNER_IMAGE=$(RUNNER_QUAY_IMAGE):$(RUNNER_PRELOAD_TAG) $(QUIET_REDIRECT); \
 	fi
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Waiting for pods..."
 	@./tests/infra/wait-for-ready.sh
@@ -1517,6 +1525,57 @@ KIND_MCP_IMAGES := $(MCP_IMAGE) $(GITHUB_MCP_IMAGE) $(JIRA_MCP_IMAGE) $(K8S_MCP_
 ifeq ($(OPENSHELL_USE_GATEWAY),true)
 KIND_MCP_IMAGES :=
 endif
+
+_kind-preload-runner: ## Internal: Pull runner image from Quay, retag, and load into kind cluster
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Pre-loading runner image into kind ($(KIND_CLUSTER_NAME))..."
+	@_LOG=/tmp/runner-preload-$$$$.log; \
+	printf '  Pulling $(RUNNER_QUAY_IMAGE):latest '; \
+	$(CONTAINER_ENGINE) pull $(RUNNER_QUAY_IMAGE):latest >"$$_LOG" 2>&1 & \
+	_PID=$$!; \
+	_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; \
+	while kill -0 $$_PID 2>/dev/null; do \
+		for _c in $$(echo "$$_CHARS" | grep -o .); do \
+			printf '\b%s' "$$_c"; \
+			sleep 0.1; \
+		done; \
+	done; \
+	wait $$_PID; _RC=$$?; \
+	printf '\b \b\n'; \
+	if [ $$_RC -ne 0 ]; then \
+		echo "$(COLOR_RED)✗$(COLOR_RESET) Pull failed (log: $$_LOG)"; \
+		tail -5 "$$_LOG"; \
+		exit 1; \
+	fi; \
+	rm -f "$$_LOG"
+	@$(CONTAINER_ENGINE) tag $(RUNNER_QUAY_IMAGE):latest $(RUNNER_QUAY_IMAGE):$(RUNNER_PRELOAD_TAG)
+	@printf '  Loading image into cluster '
+	@_LOG=/tmp/runner-load-$$$$.log; \
+	if [ "$(CONTAINER_ENGINE)" = "podman" ] || [ -n "$(KIND_HOST)" ]; then \
+		( $(CONTAINER_ENGINE) save $(RUNNER_QUAY_IMAGE):$(RUNNER_PRELOAD_TAG) | \
+		$(CONTAINER_ENGINE) exec -i $(KIND_CLUSTER_NAME)-control-plane \
+		ctr --namespace=k8s.io images import - ) >"$$_LOG" 2>&1 & \
+	else \
+		( $(CONTAINER_ENGINE) save -o /tmp/runner-preload.tar $(RUNNER_QUAY_IMAGE):$(RUNNER_PRELOAD_TAG) && \
+		kind load image-archive /tmp/runner-preload.tar --name $(KIND_CLUSTER_NAME) && \
+		rm -f /tmp/runner-preload.tar ) >"$$_LOG" 2>&1 & \
+	fi; \
+	_PID=$$!; \
+	_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; \
+	while kill -0 $$_PID 2>/dev/null; do \
+		for _c in $$(echo "$$_CHARS" | grep -o .); do \
+			printf '\b%s' "$$_c"; \
+			sleep 0.1; \
+		done; \
+	done; \
+	wait $$_PID; _RC=$$?; \
+	printf '\b \b\n'; \
+	if [ $$_RC -ne 0 ]; then \
+		echo "$(COLOR_RED)✗$(COLOR_RESET) Load failed (log: $$_LOG)"; \
+		tail -5 "$$_LOG"; \
+		exit 1; \
+	fi; \
+	rm -f "$$_LOG"
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Runner image pre-loaded: $(RUNNER_QUAY_IMAGE):$(RUNNER_PRELOAD_TAG)"
 
 _kind-load-images: ## Internal: Load images into kind cluster
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Loading images into kind ($(KIND_CLUSTER_NAME))..."
