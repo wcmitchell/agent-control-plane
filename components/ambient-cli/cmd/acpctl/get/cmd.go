@@ -43,6 +43,7 @@ Valid resource types:
   role-bindings       (aliases: role-binding, rb)
   credentials         (aliases: credential, cred)
   applications        (aliases: application, app, apps)
+  gateways            (aliases: gateway, gw)
 `,
 	Args:    cobra.RangeArgs(1, 2),
 	RunE:    run,
@@ -147,8 +148,10 @@ func run(cmd *cobra.Command, cmdArgs []string) error {
 		return getCredentials(ctx, client, printer, name)
 	case "applications":
 		return getApplications(ctx, client, printer, name)
+	case "gateways":
+		return getGateways(ctx, client, printer, name)
 	default:
-		return fmt.Errorf("unknown resource type: %s\nValid types: sessions, projects, project-agents, project-settings, users, agents, providers, policies, roles, role-bindings, credentials", cmdArgs[0])
+		return fmt.Errorf("unknown resource type: %s\nValid types: sessions, projects, project-agents, project-settings, users, agents, providers, policies, roles, role-bindings, credentials, gateways", cmdArgs[0])
 	}
 }
 
@@ -178,6 +181,8 @@ func normalizeResource(r string) string {
 		return "credentials"
 	case "application", "applications", "app", "apps":
 		return "applications"
+	case "gateway", "gateways", "gw":
+		return "gateways"
 	default:
 		return r
 	}
@@ -903,6 +908,93 @@ func printApplicationTable(printer *output.Printer, applications []sdktypes.Appl
 		table.WriteRow(a.ID, a.Name, source, a.DestinationProject, a.SyncStatus, a.HealthStatus, age)
 	}
 	return nil
+}
+
+func getGateways(ctx context.Context, client *sdkclient.Client, printer *output.Printer, name string) error {
+	if name != "" {
+		gw, err := findGateway(ctx, client, name)
+		if err != nil {
+			return err
+		}
+		if printer.Format() == output.FormatJSON {
+			return printer.PrintJSON(gw)
+		}
+		if err := printGatewayTable(printer, []sdktypes.Gateway{*gw}); err != nil {
+			return err
+		}
+		printGatewayConnectionInfo(printer.Writer(), gw)
+		return nil
+	}
+
+	opts := sdktypes.NewListOptions().Size(args.limit).Build()
+	list, err := client.Gateways().List(ctx, opts)
+	if err != nil {
+		return fmt.Errorf("list gateways: %w", err)
+	}
+
+	if printer.Format() == output.FormatJSON {
+		return printer.PrintJSON(list)
+	}
+
+	return printGatewayTable(printer, list.Items)
+}
+
+func findGateway(ctx context.Context, client *sdkclient.Client, nameOrID string) (*sdktypes.Gateway, error) {
+	gw, err := client.Gateways().Get(ctx, nameOrID)
+	if err == nil {
+		return gw, nil
+	}
+
+	page := 1
+	pageSize := 100
+	for {
+		opts := sdktypes.NewListOptions().Page(page).Size(pageSize).Build()
+		list, err2 := client.Gateways().List(ctx, opts)
+		if err2 != nil {
+			return nil, fmt.Errorf("list gateways: %w", err2)
+		}
+		for i := range list.Items {
+			if list.Items[i].Name == nameOrID {
+				return &list.Items[i], nil
+			}
+		}
+		if len(list.Items) < pageSize {
+			break
+		}
+		page++
+	}
+	return nil, fmt.Errorf("gateway %q not found", nameOrID)
+}
+
+func printGatewayTable(printer *output.Printer, gateways []sdktypes.Gateway) error {
+	columns := []output.Column{
+		{Name: "NAME", Width: 24},
+		{Name: "IMAGE", Width: 50},
+		{Name: "DNS NAMES", Width: 50},
+		{Name: "AGE", Width: 10},
+	}
+	table := output.NewTable(printer.Writer(), columns)
+	table.WriteHeaders()
+	for _, gw := range gateways {
+		age := ""
+		if gw.CreatedAt != nil {
+			age = output.FormatAge(time.Since(*gw.CreatedAt))
+		}
+		dnsNames := strings.Join(gw.ServerDnsNames, ",")
+		table.WriteRow(gw.Name, gw.Image, dnsNames, age)
+	}
+	return nil
+}
+
+func printGatewayConnectionInfo(w io.Writer, gw *sdktypes.Gateway) {
+	namespace := strings.ToLower(gw.ProjectID)
+	fmt.Fprintf(w, "\nConnection Info:\n")
+	fmt.Fprintf(w, "  Cluster DNS:  openshell-gateway.%s.svc.cluster.local:8080\n", namespace)
+	if len(gw.ServerDnsNames) > 0 {
+		fmt.Fprintf(w, "  Server SANs:  %s\n", strings.Join(gw.ServerDnsNames, ", "))
+	}
+	fmt.Fprintf(w, "\nSetup openshell CLI:\n")
+	fmt.Fprintf(w, "  acpctl gateway setup-cli %s --gateway-url <url>\n", gw.Name)
 }
 
 func sessionChanged(old, current sdktypes.Session) bool {
